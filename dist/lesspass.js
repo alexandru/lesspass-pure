@@ -22581,7 +22581,7 @@ exports.default = {
             this.renderPassword();
         },
         'generatedPassword': function generatedPassword() {
-            this.cleanFormInSeconds(30);
+            this.cleanFormInSeconds(60);
         }
     },
     methods: {
@@ -35488,7 +35488,7 @@ module.exports={render:function (){var _vm=this;
     },
     on: {
       "click": function($event) {
-        _vm.cleanFormInSeconds(10)
+        _vm.cleanFormInSeconds(60)
       }
     }
   }, [_vm._m(6), " Copy\n                     "])])])])]), " ", _vm._m(7), " ", _vm._h('div', {

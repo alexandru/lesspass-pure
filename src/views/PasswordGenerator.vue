@@ -106,7 +106,7 @@
                          <button id="copyPasswordButton" class="btn-copy btn btn-primary"
                                  :disabled="!generatedPassword"
                                  type="button"
-                                 v-on:click="cleanFormInSeconds(10)"
+                                 v-on:click="cleanFormInSeconds(60)"
                                  data-clipboard-target="#generatedPassword">
                          <i class="fa fa-clipboard white"></i> Copy
                          </button>
@@ -257,7 +257,7 @@
                 this.renderPassword();
             },
             'generatedPassword': function () {
-                this.cleanFormInSeconds(30);
+                this.cleanFormInSeconds(60);
             },
         },
         methods: {
