@@ -22593,7 +22593,7 @@ exports.default = {
                     _this2.encryptedLogin = encryptedLogin;
                 });
             }
-        }, 500),
+        }, 3000),
         showMasterPassword: function showMasterPassword() {
             if (this.$refs.masterPassword.type === 'password') {
                 this.$refs.masterPassword.type = 'text';
