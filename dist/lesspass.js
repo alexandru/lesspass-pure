@@ -8818,7 +8818,7 @@ function decrypt (data, password) {
 
 "use strict";
 /* WEBPACK VAR INJECTION */(function(process) {/*!
- * Vue.js v2.0.3
+ * Vue.js v2.0.5
  * (c) 2014-2016 Evan You
  * Released under the MIT License.
  */
@@ -9162,7 +9162,7 @@ function def (obj, key, val, enumerable) {
 /**
  * Parse simple path.
  */
-var bailRE = /[^\w\.\$]/;
+var bailRE = /[^\w.$]/;
 function parsePath (path) {
   if (bailRE.test(path)) {
     return
@@ -9677,7 +9677,7 @@ Watcher.prototype.depend = function depend () {
 };
 
 /**
- * Remove self from all dependencies' subcriber list.
+ * Remove self from all dependencies' subscriber list.
  */
 Watcher.prototype.teardown = function teardown () {
     var this$1 = this;
@@ -9704,31 +9704,31 @@ Watcher.prototype.teardown = function teardown () {
  * is collected as a "deep" dependency.
  */
 var seenObjects = new _Set();
-function traverse (val, seen) {
+function traverse (val) {
+  seenObjects.clear();
+  _traverse(val, seenObjects);
+}
+
+function _traverse (val, seen) {
   var i, keys;
-  if (!seen) {
-    seen = seenObjects;
-    seen.clear();
-  }
   var isA = Array.isArray(val);
-  var isO = isObject(val);
-  if ((isA || isO) && Object.isExtensible(val)) {
-    if (val.__ob__) {
-      var depId = val.__ob__.dep.id;
-      if (seen.has(depId)) {
-        return
-      } else {
-        seen.add(depId);
-      }
+  if ((!isA && !isObject(val)) || !Object.isExtensible(val)) {
+    return
+  }
+  if (val.__ob__) {
+    var depId = val.__ob__.dep.id;
+    if (seen.has(depId)) {
+      return
     }
-    if (isA) {
-      i = val.length;
-      while (i--) { traverse(val[i], seen); }
-    } else if (isO) {
-      keys = Object.keys(val);
-      i = keys.length;
-      while (i--) { traverse(val[keys[i]], seen); }
-    }
+    seen.add(depId);
+  }
+  if (isA) {
+    i = val.length;
+    while (i--) { _traverse(val[i], seen); }
+  } else {
+    keys = Object.keys(val);
+    i = keys.length;
+    while (i--) { _traverse(val[keys[i]], seen); }
   }
 }
 
@@ -9951,6 +9951,7 @@ function defineReactive$$1 (
  */
 function set (obj, key, val) {
   if (Array.isArray(obj)) {
+    obj.length = Math.max(obj.length, key);
     obj.splice(key, 1, val);
     return val
   }
@@ -10137,10 +10138,14 @@ function initMethods (vm) {
   if (methods) {
     for (var key in methods) {
       vm[key] = methods[key] == null ? noop : bind$1(methods[key], vm);
-      if (process.env.NODE_ENV !== 'production' && methods[key] == null) {
-        warn(
+      if (process.env.NODE_ENV !== 'production') {
+        methods[key] == null && warn(
           "method \"" + key + "\" has an undefined value in the component definition. " +
           "Did you reference the function correctly?",
+          vm
+        );
+        hasOwn(Vue$1.prototype, key) && warn(
+          ("Avoid overriding Vue's internal method \"" + key + "\"."),
           vm
         );
       }
@@ -10260,6 +10265,7 @@ var VNode = function VNode (
   this.isRootInsert = true;
   this.isComment = false;
   this.isCloned = false;
+  this.isOnce = false;
 };
 
 var emptyVNode = function () {
@@ -10580,6 +10586,7 @@ function lifecycleMixin (Vue) {
       if (process.env.NODE_ENV !== 'production') {
         observerState.isSettingProps = false;
       }
+      vm.$options.propsData = propsData;
     }
     // update listeners
     if (listeners) {
@@ -10667,7 +10674,7 @@ function createComponent (
   }
 
   if (isObject(Ctor)) {
-    Ctor = Vue$2.extend(Ctor);
+    Ctor = Vue$1.extend(Ctor);
   }
 
   if (typeof Ctor !== 'function') {
@@ -10676,6 +10683,10 @@ function createComponent (
     }
     return
   }
+
+  // resolve constructor options in case global mixins are applied after
+  // component constructor creation
+  resolveConstructorOptions(Ctor);
 
   // async component
   if (!Ctor.cid) {
@@ -10846,7 +10857,7 @@ function resolveAsyncComponent (
 
     var resolve = function (res) {
       if (isObject(res)) {
-        res = Vue$2.extend(res);
+        res = Vue$1.extend(res);
       }
       // cache resolved
       factory.resolved = res;
@@ -10880,7 +10891,7 @@ function resolveAsyncComponent (
 }
 
 function extractProps (data, Ctor) {
-  // we are only extrating raw values here.
+  // we are only extracting raw values here.
   // validation and default values are handled in the child
   // component itself.
   var propOptions = Ctor.options.props;
@@ -10999,8 +11010,9 @@ function _createElement (
       // unknown or unlisted namespaced elements
       // check at runtime because it may get assigned a namespace when its
       // parent normalizes children
+      var childNs = tag === 'foreignObject' ? 'xhtml' : ns;
       return new VNode(
-        tag, data, normalizeChildren(children, ns),
+        tag, data, normalizeChildren(children, childNs),
         undefined, undefined, ns, context
       )
     }
@@ -11066,7 +11078,7 @@ function renderMixin (Vue) {
         if (config._isServer) {
           throw e
         } else {
-          setTimeout(function () { throw e }, 0);
+          console.error(e);
         }
       }
       // return previous vnode to prevent render error causing blank component
@@ -11116,19 +11128,37 @@ function renderMixin (Vue) {
     }
     // otherwise, render a fresh tree.
     tree = this._staticTrees[index] = this.$options.staticRenderFns[index].call(this._renderProxy);
+    markStatic(tree, ("__static__" + index), false);
+    return tree
+  };
+
+  // mark node as static (v-once)
+  Vue.prototype._o = function markOnce (
+    tree,
+    index,
+    key
+  ) {
+    markStatic(tree, ("__once__" + index + (key ? ("_" + key) : "")), true);
+    return tree
+  };
+
+  function markStatic (tree, key, isOnce) {
     if (Array.isArray(tree)) {
       for (var i = 0; i < tree.length; i++) {
-        if (typeof tree[i] !== 'string') {
-          tree[i].isStatic = true;
-          tree[i].key = "__static__" + index + "_" + i;
+        if (tree[i] && typeof tree[i] !== 'string') {
+          markStaticNode(tree[i], (key + "_" + i), isOnce);
         }
       }
     } else {
-      tree.isStatic = true;
-      tree.key = "__static__" + index;
+      markStaticNode(tree, key, isOnce);
     }
-    return tree
-  };
+  }
+
+  function markStaticNode (node, key, isOnce) {
+    node.isStatic = true;
+    node.key = key;
+    node.isOnce = isOnce;
+  }
 
   // filter resolution helper
   var identity = function (_) { return _; };
@@ -11350,7 +11380,7 @@ function initMixin (Vue) {
       initInternalComponent(vm, options);
     } else {
       vm.$options = mergeOptions(
-        resolveConstructorOptions(vm),
+        resolveConstructorOptions(vm.constructor),
         options || {},
         vm
       );
@@ -11370,54 +11400,56 @@ function initMixin (Vue) {
     callHook(vm, 'created');
     initRender(vm);
   };
+}
 
-  function initInternalComponent (vm, options) {
-    var opts = vm.$options = Object.create(resolveConstructorOptions(vm));
-    // doing this because it's faster than dynamic enumeration.
-    opts.parent = options.parent;
-    opts.propsData = options.propsData;
-    opts._parentVnode = options._parentVnode;
-    opts._parentListeners = options._parentListeners;
-    opts._renderChildren = options._renderChildren;
-    opts._componentTag = options._componentTag;
-    if (options.render) {
-      opts.render = options.render;
-      opts.staticRenderFns = options.staticRenderFns;
-    }
-  }
-
-  function resolveConstructorOptions (vm) {
-    var Ctor = vm.constructor;
-    var options = Ctor.options;
-    if (Ctor.super) {
-      var superOptions = Ctor.super.options;
-      var cachedSuperOptions = Ctor.superOptions;
-      if (superOptions !== cachedSuperOptions) {
-        // super option changed
-        Ctor.superOptions = superOptions;
-        options = Ctor.options = mergeOptions(superOptions, Ctor.extendOptions);
-        if (options.name) {
-          options.components[options.name] = Ctor;
-        }
-      }
-    }
-    return options
+function initInternalComponent (vm, options) {
+  var opts = vm.$options = Object.create(vm.constructor.options);
+  // doing this because it's faster than dynamic enumeration.
+  opts.parent = options.parent;
+  opts.propsData = options.propsData;
+  opts._parentVnode = options._parentVnode;
+  opts._parentListeners = options._parentListeners;
+  opts._renderChildren = options._renderChildren;
+  opts._componentTag = options._componentTag;
+  if (options.render) {
+    opts.render = options.render;
+    opts.staticRenderFns = options.staticRenderFns;
   }
 }
 
-function Vue$2 (options) {
+function resolveConstructorOptions (Ctor) {
+  var options = Ctor.options;
+  if (Ctor.super) {
+    var superOptions = Ctor.super.options;
+    var cachedSuperOptions = Ctor.superOptions;
+    var extendOptions = Ctor.extendOptions;
+    if (superOptions !== cachedSuperOptions) {
+      // super option changed
+      Ctor.superOptions = superOptions;
+      extendOptions.render = options.render;
+      extendOptions.staticRenderFns = options.staticRenderFns;
+      options = Ctor.options = mergeOptions(superOptions, extendOptions);
+      if (options.name) {
+        options.components[options.name] = Ctor;
+      }
+    }
+  }
+  return options
+}
+
+function Vue$1 (options) {
   if (process.env.NODE_ENV !== 'production' &&
-    !(this instanceof Vue$2)) {
+    !(this instanceof Vue$1)) {
     warn('Vue is a constructor and should be called with the `new` keyword');
   }
   this._init(options);
 }
 
-initMixin(Vue$2);
-stateMixin(Vue$2);
-eventsMixin(Vue$2);
-lifecycleMixin(Vue$2);
-renderMixin(Vue$2);
+initMixin(Vue$1);
+stateMixin(Vue$1);
+eventsMixin(Vue$1);
+lifecycleMixin(Vue$1);
+renderMixin(Vue$1);
 
 var warn = noop;
 var formatComponentName;
@@ -11636,26 +11668,16 @@ var defaultStrat = function (parentVal, childVal) {
 };
 
 /**
- * Make sure component options get converted to actual
- * constructors.
+ * Validate component names
  */
-function normalizeComponents (options) {
-  if (options.components) {
-    var components = options.components;
-    var def;
-    for (var key in components) {
-      var lower = key.toLowerCase();
-      if (isBuiltInTag(lower) || config.isReservedTag(lower)) {
-        process.env.NODE_ENV !== 'production' && warn(
-          'Do not use built-in or reserved HTML elements as component ' +
-          'id: ' + key
-        );
-        continue
-      }
-      def = components[key];
-      if (isPlainObject(def)) {
-        components[key] = Vue$2.extend(def);
-      }
+function checkComponents (options) {
+  for (var key in options.components) {
+    var lower = key.toLowerCase();
+    if (isBuiltInTag(lower) || config.isReservedTag(lower)) {
+      warn(
+        'Do not use built-in or reserved HTML elements as component ' +
+        'id: ' + key
+      );
     }
   }
 }
@@ -11716,7 +11738,9 @@ function mergeOptions (
   child,
   vm
 ) {
-  normalizeComponents(child);
+  if (process.env.NODE_ENV !== 'production') {
+    checkComponents(child);
+  }
   normalizeProps(child);
   normalizeDirectives(child);
   var extendsFrom = child.extends;
@@ -11728,7 +11752,7 @@ function mergeOptions (
   if (child.mixins) {
     for (var i = 0, l = child.mixins.length; i < l; i++) {
       var mixin = child.mixins[i];
-      if (mixin.prototype instanceof Vue$2) {
+      if (mixin.prototype instanceof Vue$1) {
         mixin = mixin.options;
       }
       parent = mergeOptions(parent, mixin, vm);
@@ -11819,7 +11843,7 @@ function validateProp (
 /**
  * Get the default value of a prop.
  */
-function getPropDefaultValue (vm, prop, name) {
+function getPropDefaultValue (vm, prop, key) {
   // no default, return undefined
   if (!hasOwn(prop, 'default')) {
     return undefined
@@ -11828,11 +11852,18 @@ function getPropDefaultValue (vm, prop, name) {
   // warn against non-factory defaults for Object & Array
   if (isObject(def)) {
     process.env.NODE_ENV !== 'production' && warn(
-      'Invalid default value for prop "' + name + '": ' +
+      'Invalid default value for prop "' + key + '": ' +
       'Props with type Object/Array must use a factory function ' +
       'to return the default value.',
       vm
     );
+  }
+  // the raw prop value was also undefined from previous render,
+  // return previous default value to avoid unnecessary watcher trigger
+  if (vm && vm.$options.propsData &&
+    vm.$options.propsData[key] === undefined &&
+    vm[key] !== undefined) {
+    return vm[key]
   }
   // call factory function for non-Function types
   return typeof def === 'function' && prop.type !== Function
@@ -12047,7 +12078,6 @@ function initExtend (Vue) {
           'Invalid component name: "' + name + '". Component names ' +
           'can only contain alphanumeric characaters and the hyphen.'
         );
-        name = null;
       }
     }
     var Sub = function VueComponent (options) {
@@ -12193,13 +12223,13 @@ function initGlobalAPI (Vue) {
   initAssetRegisters(Vue);
 }
 
-initGlobalAPI(Vue$2);
+initGlobalAPI(Vue$1);
 
-Object.defineProperty(Vue$2.prototype, '$isServer', {
+Object.defineProperty(Vue$1.prototype, '$isServer', {
   get: function () { return config._isServer; }
 });
 
-Vue$2.version = '2.0.3';
+Vue$1.version = '2.0.5';
 
 /*  */
 
@@ -12325,7 +12355,8 @@ function stringifyClass (value) {
 
 var namespaceMap = {
   svg: 'http://www.w3.org/2000/svg',
-  math: 'http://www.w3.org/1998/Math/MathML'
+  math: 'http://www.w3.org/1998/Math/MathML',
+  xhtml: 'http://www.w3.org/1999/xhtm'
 };
 
 var isHTMLTag = makeMap(
@@ -12633,7 +12664,10 @@ function createPatchFunction (backend) {
 
   function removeElement (el) {
     var parent = nodeOps.parentNode(el);
-    nodeOps.removeChild(parent, el);
+    // element may have already been removed due to v-html
+    if (parent) {
+      nodeOps.removeChild(parent, el);
+    }
   }
 
   function createElm (vnode, insertedVnodeQueue, nested) {
@@ -12892,7 +12926,7 @@ function createPatchFunction (backend) {
     if (vnode.isStatic &&
         oldVnode.isStatic &&
         vnode.key === oldVnode.key &&
-        vnode.isCloned) {
+        (vnode.isCloned || vnode.isOnce)) {
       vnode.elm = oldVnode.elm;
       return
     }
@@ -13330,7 +13364,7 @@ function updateDOMProps (oldVnode, vnode) {
 
   for (key in oldProps) {
     if (props[key] == null) {
-      elm[key] = undefined;
+      elm[key] = '';
     }
   }
   for (key in props) {
@@ -13362,6 +13396,16 @@ var domProps = {
 };
 
 /*  */
+
+var cssVarRE = /^--/;
+var setProp = function (el, name, val) {
+  /* istanbul ignore if */
+  if (cssVarRE.test(name)) {
+    el.style.setProperty(name, val);
+  } else {
+    el.style[normalize(name)] = val;
+  }
+};
 
 var prefixes = ['Webkit', 'Moz', 'ms'];
 
@@ -13411,14 +13455,14 @@ function updateStyle (oldVnode, vnode) {
 
   for (name in oldStyle) {
     if (style[name] == null) {
-      el.style[normalize(name)] = '';
+      setProp(el, name, '');
     }
   }
   for (name in style) {
     cur = style[name];
     if (cur !== oldStyle[name]) {
       // ie9 setting to null has no effect, must use empty string
-      el.style[normalize(name)] = cur == null ? '' : cur;
+      setProp(el, name, cur == null ? '' : cur);
     }
   }
 }
@@ -13435,6 +13479,11 @@ var style = {
  * SVG elements in IE
  */
 function addClass (el, cls) {
+  /* istanbul ignore if */
+  if (!cls || !cls.trim()) {
+    return
+  }
+
   /* istanbul ignore else */
   if (el.classList) {
     if (cls.indexOf(' ') > -1) {
@@ -13455,6 +13504,11 @@ function addClass (el, cls) {
  * SVG elements in IE
  */
 function removeClass (el, cls) {
+  /* istanbul ignore if */
+  if (!cls || !cls.trim()) {
+    return
+  }
+
   /* istanbul ignore else */
   if (el.classList) {
     if (cls.indexOf(' ') > -1) {
@@ -13599,6 +13653,11 @@ function getTransitionInfo (el, expectedType) {
 }
 
 function getTimeout (delays, durations) {
+  /* istanbul ignore next */
+  while (delays.length < durations.length) {
+    delays = delays.concat(delays);
+  }
+
   return Math.max.apply(null, durations.map(function (d, i) {
     return toMs(d) + toMs(delays[i])
   }))
@@ -13886,7 +13945,7 @@ var patch$1 = createPatchFunction({ nodeOps: nodeOps, modules: modules });
  * properties to Elements.
  */
 
-var modelableTagRE = /^input|select|textarea|vue-component-[0-9]+(-[0-9a-zA-Z_\-]*)?$/;
+var modelableTagRE = /^input|select|textarea|vue-component-[0-9]+(-[0-9a-zA-Z_-]*)?$/;
 
 /* istanbul ignore if */
 if (isIE9) {
@@ -13939,7 +13998,7 @@ var model = {
       setSelected(el, binding, vnode.context);
       // in case the options rendered by v-for have changed,
       // it's possible that the value is out-of-sync with the rendered options.
-      // detect such cases and filter out values that no longer has a matchig
+      // detect such cases and filter out values that no longer has a matching
       // option in the DOM.
       var needReset = el.multiple
         ? binding.value.some(function (v) { return hasNoMatchingOption(v, el.options); })
@@ -14084,7 +14143,7 @@ var transitionProps = {
 };
 
 // in case the child is also an abstract component, e.g. <keep-alive>
-// we want to recrusively retrieve the real component to be rendered
+// we want to recursively retrieve the real component to be rendered
 function getRealChild (vnode) {
   var compOptions = vnode && vnode.componentOptions;
   if (compOptions && compOptions.Ctor.options.abstract) {
@@ -14390,20 +14449,20 @@ var platformComponents = {
 /*  */
 
 // install platform specific utils
-Vue$2.config.isUnknownElement = isUnknownElement;
-Vue$2.config.isReservedTag = isReservedTag;
-Vue$2.config.getTagNamespace = getTagNamespace;
-Vue$2.config.mustUseProp = mustUseProp;
+Vue$1.config.isUnknownElement = isUnknownElement;
+Vue$1.config.isReservedTag = isReservedTag;
+Vue$1.config.getTagNamespace = getTagNamespace;
+Vue$1.config.mustUseProp = mustUseProp;
 
 // install platform runtime directives & components
-extend(Vue$2.options.directives, platformDirectives);
-extend(Vue$2.options.components, platformComponents);
+extend(Vue$1.options.directives, platformDirectives);
+extend(Vue$1.options.components, platformComponents);
 
 // install platform patch function
-Vue$2.prototype.__patch__ = config._isServer ? noop : patch$1;
+Vue$1.prototype.__patch__ = config._isServer ? noop : patch$1;
 
 // wrap mount
-Vue$2.prototype.$mount = function (
+Vue$1.prototype.$mount = function (
   el,
   hydrating
 ) {
@@ -14416,7 +14475,7 @@ Vue$2.prototype.$mount = function (
 setTimeout(function () {
   if (config.devtools) {
     if (devtools) {
-      devtools.emit('init', Vue$2);
+      devtools.emit('init', Vue$1);
     } else if (
       process.env.NODE_ENV !== 'production' &&
       inBrowser && /Chrome\/\d+/.test(window.navigator.userAgent)
@@ -14429,7 +14488,7 @@ setTimeout(function () {
   }
 }, 0);
 
-module.exports = Vue$2;
+module.exports = Vue$1;
 
 /* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(7)))
 
@@ -14823,12 +14882,17 @@ module.exports = {
 };
 
 function _encryptLogin(login, masterPassword) {
+    var _ref = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
+
+    var _ref$iterations = _ref.iterations;
+    var iterations = _ref$iterations === undefined ? 8192 : _ref$iterations;
+    var _ref$keylen = _ref.keylen;
+    var keylen = _ref$keylen === undefined ? 32 : _ref$keylen;
+
     return new Promise(function (resolve, reject) {
         if (!login || !masterPassword) {
             reject('login and master password parameters could not be empty');
         }
-        var iterations = 8192;
-        var keylen = 32;
         _crypto2.default.pbkdf2(masterPassword, login, iterations, keylen, 'sha256', function (error, key) {
             if (error) {
                 reject('error in pbkdf2');
@@ -14841,7 +14905,7 @@ function _encryptLogin(login, masterPassword) {
 
 function _renderPassword(encryptedLogin, site, passwordOptions) {
     return _deriveEncryptedLogin(encryptedLogin, site, passwordOptions).then(function (derivedEncryptedLogin) {
-        var template = _getPasswordTemplate(passwordOptions);
+        var template = passwordOptions.template || _getPasswordTemplate(passwordOptions);
         return _prettyPrint(derivedEncryptedLogin, template);
     });
 }
@@ -15073,7 +15137,6 @@ function Transform(options) {
 
   this._transformState = new TransformState(this);
 
-  // when the writable side finishes, then flush out anything remaining.
   var stream = this;
 
   // start out asking for a readable event once data is transformed.
@@ -15090,9 +15153,10 @@ function Transform(options) {
     if (typeof options.flush === 'function') this._flush = options.flush;
   }
 
+  // When the writable side finishes, then flush out anything remaining.
   this.once('prefinish', function () {
-    if (typeof this._flush === 'function') this._flush(function (er) {
-      done(stream, er);
+    if (typeof this._flush === 'function') this._flush(function (er, data) {
+      done(stream, er, data);
     });else done(stream);
   });
 }
@@ -15113,7 +15177,7 @@ Transform.prototype.push = function (chunk, encoding) {
 // an error, then that'll put the hurt on the whole operation.  If you
 // never call cb(), then you'll never get another chunk.
 Transform.prototype._transform = function (chunk, encoding, cb) {
-  throw new Error('Not implemented');
+  throw new Error('_transform() is not implemented');
 };
 
 Transform.prototype._write = function (chunk, encoding, cb) {
@@ -15143,8 +15207,10 @@ Transform.prototype._read = function (n) {
   }
 };
 
-function done(stream, er) {
+function done(stream, er, data) {
   if (er) return stream.emit('error', er);
+
+  if (data !== null && data !== undefined) stream.push(data);
 
   // if there's nothing in the write buffer, then that means
   // that nothing more will ever be provided
@@ -15177,6 +15243,10 @@ var processNextTick = __webpack_require__(63);
 
 /*<replacement>*/
 var asyncWrite = !process.browser && ['v0.10', 'v0.9.'].indexOf(process.version.slice(0, 5)) > -1 ? setImmediate : processNextTick;
+/*</replacement>*/
+
+/*<replacement>*/
+var Duplex;
 /*</replacement>*/
 
 Writable.WritableState = WritableState;
@@ -15219,7 +15289,6 @@ function WriteReq(chunk, encoding, cb) {
   this.next = null;
 }
 
-var Duplex;
 function WritableState(options, stream) {
   Duplex = Duplex || __webpack_require__(10);
 
@@ -15241,6 +15310,7 @@ function WritableState(options, stream) {
   // cast to ints.
   this.highWaterMark = ~ ~this.highWaterMark;
 
+  // drain event flag.
   this.needDrain = false;
   // at the start of calling end()
   this.ending = false;
@@ -15315,7 +15385,7 @@ function WritableState(options, stream) {
   this.corkedRequestsFree = new CorkedRequest(this);
 }
 
-WritableState.prototype.getBuffer = function writableStateGetBuffer() {
+WritableState.prototype.getBuffer = function getBuffer() {
   var current = this.bufferedRequest;
   var out = [];
   while (current) {
@@ -15335,13 +15405,37 @@ WritableState.prototype.getBuffer = function writableStateGetBuffer() {
   } catch (_) {}
 })();
 
-var Duplex;
+// Test _writableState for inheritance to account for Duplex streams,
+// whose prototype chain only points to Readable.
+var realHasInstance;
+if (typeof Symbol === 'function' && Symbol.hasInstance) {
+  realHasInstance = Function.prototype[Symbol.hasInstance];
+  Object.defineProperty(Writable, Symbol.hasInstance, {
+    value: function (object) {
+      if (realHasInstance.call(this, object)) return true;
+
+      return object && object._writableState instanceof WritableState;
+    }
+  });
+} else {
+  realHasInstance = function (object) {
+    return object instanceof this;
+  };
+}
+
 function Writable(options) {
   Duplex = Duplex || __webpack_require__(10);
 
-  // Writable ctor is applied to Duplexes, though they're not
-  // instanceof Writable, they're instanceof Readable.
-  if (!(this instanceof Writable) && !(this instanceof Duplex)) return new Writable(options);
+  // Writable ctor is applied to Duplexes, too.
+  // `realHasInstance` is necessary because using plain `instanceof`
+  // would return false, as no `_writableState` property is attached.
+
+  // Trying to use the custom `instanceof` for Writable here will also break the
+  // Node.js LazyTransform implementation, which has a non-trivial getter for
+  // `_writableState` that would lead to infinite recursion.
+  if (!realHasInstance.call(Writable, this) && !(this instanceof Duplex)) {
+    return new Writable(options);
+  }
 
   this._writableState = new WritableState(options, this);
 
@@ -15601,7 +15695,7 @@ function clearBuffer(stream, state) {
 }
 
 Writable.prototype._write = function (chunk, encoding, cb) {
-  cb(new Error('not implemented'));
+  cb(new Error('_write() is not implemented'));
 };
 
 Writable.prototype._writev = null;
@@ -16302,6 +16396,8 @@ DERNode.prototype._decodeStr = function decodeStr(buffer, tag) {
     return numstr;
   } else if (tag === 'octstr') {
     return buffer.raw();
+  } else if (tag === 'objDesc') {
+    return buffer.raw();
   } else if (tag === 'printstr') {
     var printstr = buffer.raw().toString('ascii');
     if (!this._isPrintstr(printstr)) {
@@ -16566,6 +16662,8 @@ DERNode.prototype._encodeStr = function encodeStr(str, tag) {
     }
     return this._createEncoderBuffer(str);
   } else if (/str$/.test(tag)) {
+    return this._createEncoderBuffer(str);
+  } else if (tag === 'objDesc') {
     return this._createEncoderBuffer(str);
   } else {
     return this.reporter.error('Encoding of string type: ' + tag +
@@ -18462,6 +18560,10 @@ var processNextTick = __webpack_require__(63);
 var isArray = __webpack_require__(107);
 /*</replacement>*/
 
+/*<replacement>*/
+var Duplex;
+/*</replacement>*/
+
 Readable.ReadableState = ReadableState;
 
 /*<replacement>*/
@@ -18509,6 +18611,8 @@ var StringDecoder;
 util.inherits(Readable, Stream);
 
 function prependListener(emitter, event, fn) {
+  // Sadly this is not cacheable as some libraries bundle their own
+  // event emitter implementation with them.
   if (typeof emitter.prependListener === 'function') {
     return emitter.prependListener(event, fn);
   } else {
@@ -18520,7 +18624,6 @@ function prependListener(emitter, event, fn) {
   }
 }
 
-var Duplex;
 function ReadableState(options, stream) {
   Duplex = Duplex || __webpack_require__(10);
 
@@ -18590,7 +18693,6 @@ function ReadableState(options, stream) {
   }
 }
 
-var Duplex;
 function Readable(options) {
   Duplex = Duplex || __webpack_require__(10);
 
@@ -18913,7 +19015,7 @@ function maybeReadMore_(stream, state) {
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
 Readable.prototype._read = function (n) {
-  this.emit('error', new Error('not implemented'));
+  this.emit('error', new Error('_read() is not implemented'));
 };
 
 Readable.prototype.pipe = function (dest, pipeOpts) {
@@ -19091,16 +19193,16 @@ Readable.prototype.unpipe = function (dest) {
     state.pipesCount = 0;
     state.flowing = false;
 
-    for (var _i = 0; _i < len; _i++) {
-      dests[_i].emit('unpipe', this);
+    for (var i = 0; i < len; i++) {
+      dests[i].emit('unpipe', this);
     }return this;
   }
 
   // try to find the right one.
-  var i = indexOf(state.pipes, dest);
-  if (i === -1) return this;
+  var index = indexOf(state.pipes, dest);
+  if (index === -1) return this;
 
-  state.pipes.splice(i, 1);
+  state.pipes.splice(index, 1);
   state.pipesCount -= 1;
   if (state.pipesCount === 1) state.pipes = state.pipes[0];
 
@@ -20103,15 +20205,16 @@ exports.default = new _vuex2.default.Store({
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* styles */
-__webpack_require__(305)
+__webpack_require__(303)
 
 /* script */
 __vue_exports__ = __webpack_require__(149)
 
 /* template */
-var __vue_template__ = __webpack_require__(297)
+var __vue_template__ = __webpack_require__(292)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -20208,7 +20311,7 @@ var assert = __webpack_require__(29);
 // Supported tags
 var tags = [
   'seq', 'seqof', 'set', 'setof', 'objid', 'bool',
-  'gentime', 'utctime', 'null_', 'enum', 'int',
+  'gentime', 'utctime', 'null_', 'enum', 'int', 'objDesc',
   'bitstr', 'bmpstr', 'charstr', 'genstr', 'graphstr', 'ia5str', 'iso646str',
   'numstr', 'octstr', 'printstr', 't61str', 'unistr', 'utf8str', 'videostr'
 ];
@@ -20372,6 +20475,7 @@ tags.forEach(function(tag) {
 });
 
 Node.prototype.use = function use(item) {
+  assert(item);
   var state = this._baseState;
 
   assert(state.use === null);
@@ -20615,6 +20719,8 @@ Node.prototype._decodeGeneric = function decodeGeneric(tag, input, options) {
     return this._decodeNull(input, options);
   else if (tag === 'bool')
     return this._decodeBool(input, options);
+  else if (tag === 'objDesc')
+    return this._decodeStr(input, tag, options);
   else if (tag === 'int' || tag === 'enum')
     return this._decodeInt(input, state.args && state.args[0], options);
 
@@ -20818,6 +20924,8 @@ Node.prototype._encodePrimitive = function encodePrimitive(tag, data) {
     return this._encodeInt(data, state.args && state.reverseArgs[0]);
   else if (tag === 'bool')
     return this._encodeBool(data);
+  else if (tag === 'objDesc')
+    return this._encodeStr(data, tag);
   else
     throw new Error('Unsupported tag: ' + tag);
 };
@@ -22481,7 +22589,7 @@ exports.default = {
             var _this2 = this;
 
             if (this.password.login && this.masterPassword) {
-                _lesspass2.default.encryptLogin(this.password.login, this.masterPassword).then(function (encryptedLogin) {
+                _lesspass2.default.encryptLogin(this.password.login, this.masterPassword, { iterations: 100000 }).then(function (encryptedLogin) {
                     _this2.encryptedLogin = encryptedLogin;
                 });
             }
@@ -25736,7 +25844,7 @@ exports = module.exports = __webpack_require__(28)();
 
 
 // module
-exports.push([module.i, "\n#fingerprint {\n    min-width: 90px;\n    text-align: center;\n    background-color: transparent;\n    color: white;\n}\n#fingerprint i {\n    color: black;\n    position: relative;\n    padding: 0;\n    text-shadow: 1px 1px 0 white;\n    font-size: 1.3em;\n}\n", ""]);
+exports.push([module.i, "\n#lesspass .white-link {\n    color: white;\n}\n#lesspass .white-link:hover, #lesspass .white-link:focus, #lesspass .white-link:active {\n    text-decoration: none;\n    color: white;\n}\n#lesspass, #lesspass * {\n    border-radius: 0 !important;\n}\n", ""]);
 
 // exports
 
@@ -25750,7 +25858,7 @@ exports = module.exports = __webpack_require__(28)();
 
 
 // module
-exports.push([module.i, "\n#password-generator {\n    color: #555;\n}\n.inner-addon i {\n    position: absolute;\n    padding: 10px;\n    pointer-events: none;\n    z-index: 10;\n}\n.inner-addon {\n    position: relative;\n}\n.left-addon i {\n    left: 0;\n}\n.right-addon i {\n    right: 0;\n}\n.left-addon input {\n    padding-left: 30px;\n}\n.right-addon input {\n    padding-right: 30px;\n}\n", ""]);
+exports.push([module.i, "\n.fa-white {\n    color: #ffffff;\n}\n#delete-button {\n    position: relative;\n}\n.btn-progress:before {\n    content: \"\";\n    position: absolute;\n    background: #D9534F;\n    bottom: 0;\n    left: 0;\n    top: 80%;\n    z-index: 1;\n    animation: 2s progress;\n}\n@keyframes progress {\n0% {\n        right: 100%;\n}\n100% {\n        right: 0;\n}\n}\n", ""]);
 
 // exports
 
@@ -25764,7 +25872,7 @@ exports = module.exports = __webpack_require__(28)();
 
 
 // module
-exports.push([module.i, "\n#lesspass .white-link {\n    color: white;\n}\n#lesspass .white-link:hover, #lesspass .white-link:focus, #lesspass .white-link:active {\n    text-decoration: none;\n    color: white;\n}\n#lesspass, #lesspass * {\n    border-radius: 0 !important;\n}\n", ""]);
+exports.push([module.i, "\n#fingerprint {\n    min-width: 90px;\n    text-align: center;\n    background-color: transparent;\n    color: white;\n}\n#fingerprint i {\n    color: black;\n    position: relative;\n    padding: 0;\n    text-shadow: 1px 1px 0 white;\n    font-size: 1.3em;\n}\n", ""]);
 
 // exports
 
@@ -25778,7 +25886,7 @@ exports = module.exports = __webpack_require__(28)();
 
 
 // module
-exports.push([module.i, "\n.fa-white {\n    color: #ffffff;\n}\n#delete-button {\n    position: relative;\n}\n.btn-progress:before {\n    content: \"\";\n    position: absolute;\n    background: #D9534F;\n    bottom: 0;\n    left: 0;\n    top: 80%;\n    z-index: 1;\n    animation: 2s progress;\n}\n@keyframes progress {\n0% {\n        right: 100%;\n}\n100% {\n        right: 0;\n}\n}\n", ""]);
+exports.push([module.i, "\n.card-header-dark {\n    background-color: #555;\n    border-color: #555;\n    color: #FFF;\n}\n.grey-link {\n    color: #373a3c;\n    text-decoration: none;\n}\n.grey-link:hover, .grey-link:focus, .grey-link:active {\n    color: #373a3c;\n    text-decoration: none;\n}\n.white-link {\n    color: white;\n}\n.white-link:hover, .white-link:focus, .white-link:active {\n    text-decoration: none;\n    color: white;\n}\n.fa-clickable {\n    cursor: pointer;\n}\n", ""]);
 
 // exports
 
@@ -25792,7 +25900,7 @@ exports = module.exports = __webpack_require__(28)();
 
 
 // module
-exports.push([module.i, "\n.card-header-dark {\n    background-color: #555;\n    border-color: #555;\n    color: #FFF;\n}\n.grey-link {\n    color: #373a3c;\n    text-decoration: none;\n}\n.grey-link:hover, .grey-link:focus, .grey-link:active {\n    color: #373a3c;\n    text-decoration: none;\n}\n.white-link {\n    color: white;\n}\n.white-link:hover, .white-link:focus, .white-link:active {\n    text-decoration: none;\n    color: white;\n}\n.fa-clickable {\n    cursor: pointer;\n}\n", ""]);
+exports.push([module.i, "\n#password-generator {\n    color: #555;\n}\n.inner-addon i {\n    position: absolute;\n    padding: 10px;\n    pointer-events: none;\n    z-index: 10;\n}\n.inner-addon {\n    position: relative;\n}\n.left-addon i {\n    left: 0;\n}\n.right-addon i {\n    right: 0;\n}\n.left-addon input {\n    padding-left: 30px;\n}\n.right-addon input {\n    padding-right: 30px;\n}\n", ""]);
 
 // exports
 
@@ -32299,7 +32407,7 @@ module.exports = {
 				"spec": ">=6.0.0 <7.0.0",
 				"type": "range"
 			},
-			"/home/guillaume/workspace/lesspass/pure/node_modules/browserify-sign"
+			"/Users/alex/Projects/lesspass-pure/node_modules/browserify-sign"
 		]
 	],
 	"_from": "elliptic@>=6.0.0 <7.0.0",
@@ -32334,7 +32442,7 @@ module.exports = {
 	"_shasum": "e4c81e0829cf0a65ab70e998b8232723b5c1bc48",
 	"_shrinkwrap": null,
 	"_spec": "elliptic@^6.0.0",
-	"_where": "/home/guillaume/workspace/lesspass/pure/node_modules/browserify-sign",
+	"_where": "/Users/alex/Projects/lesspass-pure/node_modules/browserify-sign",
 	"author": {
 		"name": "Fedor Indutny",
 		"email": "fedor@indutny.com"
@@ -34346,15 +34454,16 @@ exports.createContext = Script.createContext = function (context) {
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* styles */
-__webpack_require__(306)
+__webpack_require__(304)
 
 /* script */
 __vue_exports__ = __webpack_require__(150)
 
 /* template */
-var __vue_template__ = __webpack_require__(299)
+var __vue_template__ = __webpack_require__(294)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34377,15 +34486,16 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* styles */
-__webpack_require__(303)
+__webpack_require__(305)
 
 /* script */
 __vue_exports__ = __webpack_require__(151)
 
 /* template */
-var __vue_template__ = __webpack_require__(294)
+var __vue_template__ = __webpack_require__(296)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34408,15 +34518,16 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* styles */
-__webpack_require__(307)
+__webpack_require__(306)
 
 /* script */
 __vue_exports__ = __webpack_require__(152)
 
 /* template */
-var __vue_template__ = __webpack_require__(301)
+var __vue_template__ = __webpack_require__(298)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34439,9 +34550,10 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* template */
-var __vue_template__ = __webpack_require__(292)
+var __vue_template__ = __webpack_require__(297)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34464,12 +34576,13 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* script */
 __vue_exports__ = __webpack_require__(153)
 
 /* template */
-var __vue_template__ = __webpack_require__(293)
+var __vue_template__ = __webpack_require__(299)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34492,15 +34605,16 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* styles */
-__webpack_require__(304)
+__webpack_require__(307)
 
 /* script */
 __vue_exports__ = __webpack_require__(154)
 
 /* template */
-var __vue_template__ = __webpack_require__(296)
+var __vue_template__ = __webpack_require__(300)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34523,12 +34637,13 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* script */
 __vue_exports__ = __webpack_require__(155)
 
 /* template */
-var __vue_template__ = __webpack_require__(298)
+var __vue_template__ = __webpack_require__(295)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34551,12 +34666,13 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* script */
 __vue_exports__ = __webpack_require__(156)
 
 /* template */
-var __vue_template__ = __webpack_require__(300)
+var __vue_template__ = __webpack_require__(293)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34579,12 +34695,13 @@ module.exports = __vue_exports__
 /***/ function(module, exports, __webpack_require__) {
 
 var __vue_exports__, __vue_options__
+var __vue_styles__ = {}
 
 /* script */
 __vue_exports__ = __webpack_require__(157)
 
 /* template */
-var __vue_template__ = __webpack_require__(295)
+var __vue_template__ = __webpack_require__(301)
 __vue_options__ = __vue_exports__ = __vue_exports__ || {}
 if (
   typeof __vue_exports__.default === "object" ||
@@ -34606,29 +34723,270 @@ module.exports = __vue_exports__
 /* 292 */
 /***/ function(module, exports) {
 
-module.exports={render:function (){with(this) {
-  return _m(0)
-}},staticRenderFns: [function (){with(this) {
-  return _h('div', {
+module.exports={render:function (){var _vm=this;
+  return _vm._h('div', {
+    staticClass: "card",
+    attrs: {
+      "id": "lesspass",
+      "style": "border:none;"
+    }
+  }, [_vm._h('lesspass-menu'), " ", _vm._h('div', {
+    staticClass: "card-block",
+    attrs: {
+      "style": "min-height: 400px;"
+    }
+  }, [_vm._h('router-view')])])
+},staticRenderFns: []}
+
+/***/ },
+/* 293 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return _vm._h('form', {
+    on: {
+      "submit": function($event) {
+        $event.preventDefault();
+        _vm.resetPasswordConfirm($event)
+      }
+    }
+  }, [(_vm.showError) ? _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12 text-muted text-danger"
+  }, ["\n            " + _vm._s(_vm.errorMessage) + "\n        "])]) : _vm._e(), " ", (_vm.successMessage) ? _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12 text-muted text-success"
+  }, ["\n            You're password was reset successfully.\n            ", _vm._h('router-link', {
+    attrs: {
+      "to": {
+        name: 'login'
+      }
+    }
+  }, ["Do you want to login ?"])])]) : _vm._e(), " ", _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12"
+  }, [_vm._h('div', {
+    staticClass: "inner-addon left-addon"
+  }, [_vm._m(0), " ", _vm._h('input', {
+    directives: [{
+      name: "model",
+      rawName: "v-model",
+      value: (_vm.new_password),
+      expression: "new_password"
+    }],
+    staticClass: "form-control",
+    attrs: {
+      "id": "new-password",
+      "name": "new-password",
+      "type": "password",
+      "autocomplete": "new-password",
+      "placeholder": "New Password"
+    },
+    domProps: {
+      "value": _vm._s(_vm.new_password)
+    },
+    on: {
+      "input": function($event) {
+        if ($event.target.composing) { return; }
+        _vm.new_password = $event.target.value
+      }
+    }
+  }), " ", _vm._h('small', {
+    staticClass: "form-text text-muted text-danger"
+  }, [(_vm.passwordRequired) ? _vm._h('span', ["A password is required"]) : _vm._e()])])])]), " ", _vm._m(1)])
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-lock"
+  })
+},function (){var _vm=this;
+  return _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12"
+  }, [_vm._h('button', {
+    staticClass: "btn btn-primary",
+    attrs: {
+      "id": "loginButton",
+      "type": "submit"
+    }
+  }, ["\n                Reset my password\n            "])])])
+}]}
+
+/***/ },
+/* 294 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return _vm._h('div', {
+    attrs: {
+      "id": "delete-button"
+    }
+  }, [_vm._h('button', {
+    staticClass: "btn btn-danger",
+    class: {
+      'btn-progress': _vm.progress
+    },
+    attrs: {
+      "type": "button"
+    },
+    on: {
+      "mouseup": _vm.click,
+      "mousedown": _vm.start,
+      "mouseout": _vm.cancel
+    }
+  }, [_vm._m(0), "\n        " + _vm._s(_vm.confirmHelp) + "\n    "])])
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa-white fa fa-trash fw"
+  })
+}]}
+
+/***/ },
+/* 295 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return _vm._h('form', {
+    on: {
+      "submit": function($event) {
+        $event.preventDefault();
+        _vm.resetPassword($event)
+      }
+    }
+  }, [(_vm.showError) ? _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._m(0)]) : _vm._e(), " ", (_vm.successMessage) ? _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._m(1)]) : _vm._e(), " ", _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12"
+  }, [_vm._h('div', {
+    staticClass: "inner-addon left-addon"
+  }, [_vm._m(2), " ", _vm._h('input', {
+    directives: [{
+      name: "model",
+      rawName: "v-model",
+      value: (_vm.email),
+      expression: "email"
+    }],
+    staticClass: "form-control",
+    attrs: {
+      "id": "email",
+      "name": "email",
+      "type": "email",
+      "placeholder": "Email"
+    },
+    domProps: {
+      "value": _vm._s(_vm.email)
+    },
+    on: {
+      "input": function($event) {
+        if ($event.target.composing) { return; }
+        _vm.email = $event.target.value
+      }
+    }
+  }), " ", _vm._h('small', {
+    staticClass: "form-text text-muted text-danger"
+  }, [(_vm.emailRequired) ? _vm._h('span', ["An email is required"]) : _vm._e()])])])]), " ", _vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12"
+  }, [_vm._h('button', {
+    staticClass: "btn btn-primary",
+    attrs: {
+      "id": "loginButton",
+      "type": "submit"
+    }
+  }, [(_vm.loading) ? _vm._h('span', [_vm._m(3)]) : _vm._e(), "\n                Send me a reset link\n            "])])])])
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('div', {
+    staticClass: "col-xs-12 text-muted text-danger"
+  }, ["\n            Oops! Something went wrong. Retry in a few minutes.\n        "])
+},function (){var _vm=this;
+  return _vm._h('div', {
+    staticClass: "col-xs-12 text-muted text-success"
+  }, ["\n            If a matching account was found an email was sent to allow you to reset your password.\n        "])
+},function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-user"
+  })
+},function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-spinner fa-pulse fa-fw"
+  })
+}]}
+
+/***/ },
+/* 296 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return (_vm.fingerprint) ? _vm._h('span', {
+    staticClass: "input-group-btn"
+  }, [_vm._h('button', {
+    staticClass: "btn",
+    attrs: {
+      "id": "fingerprint",
+      "type": "button",
+      "tabindex": "-1"
+    }
+  }, [_vm._h('small', {
+    staticClass: "hint--left",
+    attrs: {
+      "aria-label": "master password fingerprint"
+    }
+  }, [_vm._h('i', {
+    staticClass: "fa fa-fw",
+    class: [_vm.icon1],
+    style: ({
+      color: _vm.color1
+    })
+  }), " ", _vm._h('i', {
+    staticClass: "fa fa-fw",
+    class: [_vm.icon2],
+    style: ({
+      color: _vm.color2
+    })
+  }), " ", _vm._h('i', {
+    staticClass: "fa fa-fw",
+    class: [_vm.icon3],
+    style: ({
+      color: _vm.color3
+    })
+  })])])]) : _vm._e()
+},staticRenderFns: []}
+
+/***/ },
+/* 297 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return _vm._m(0)
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('div', {
     attrs: {
       "style": "display: none;"
     }
-  }, [_h('label', {
+  }, [_vm._h('label', {
     attrs: {
       "for": "username"
     }
-  }, [_h('input', {
+  }, [_vm._h('input', {
     attrs: {
       "type": "text",
       "id": "username",
       "name": "username",
       "autocomplete": "username"
     }
-  })]), " ", _h('label', {
+  })]), " ", _vm._h('label', {
     attrs: {
       "for": "password"
     }
-  }, [_h('input', {
+  }, [_vm._h('input', {
     attrs: {
       "type": "password",
       "id": "password",
@@ -34636,28 +34994,143 @@ module.exports={render:function (){with(this) {
       "autocomplete": "current-password"
     }
   })])])
-}}]}
+}]}
 
 /***/ },
-/* 293 */
+/* 298 */
 /***/ function(module, exports) {
 
-module.exports={render:function (){with(this) {
-  return _h('form', [(showError) ? _h('div', {
+module.exports={render:function (){var _vm=this;
+  return _vm._h('div', {
+    attrs: {
+      "id": "menu"
+    }
+  }, [_vm._h('div', {
+    directives: [{
+      name: "show",
+      rawName: "v-show",
+      value: (_vm.isAuthenticated),
+      expression: "isAuthenticated"
+    }],
+    staticClass: "card-header"
+  }, [_vm._h('div', {
+    staticClass: "row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-6"
+  }, [_vm._h('router-link', {
+    staticClass: "grey-link",
+    attrs: {
+      "to": {
+        name: 'home'
+      }
+    }
+  }, ["LessPass"]), " ", _vm._h('span', {
+    staticClass: " hint--right",
+    attrs: {
+      "aria-label": "Save password"
+    },
+    on: {
+      "click": _vm.saveOrUpdatePassword
+    }
+  }, [(_vm.passwordStatus == 'DIRTY') ? _vm._h('i', {
+    staticClass: "fa fa-save ml-1 fa-clickable"
+  }) : _vm._e()]), " ", (_vm.passwordStatus == 'CREATED') ? _vm._h('span', {
+    staticClass: "text-success"
+  }, [_vm._m(0)]) : _vm._e()]), " ", _vm._h('div', {
+    staticClass: "col-xs-6 text-xs-right"
+  }, [_vm._h('router-link', {
+    staticClass: "grey-link ml-1",
+    attrs: {
+      "to": {
+        name: 'passwords'
+      }
+    }
+  }, [_vm._m(1)]), " ", _vm._h('button', {
+    staticClass: "grey-link ml-1 btn btn-link p-0 m-0",
+    attrs: {
+      "type": "button"
+    },
+    on: {
+      "click": _vm.logout
+    }
+  }, [_vm._m(2)])])])]), " ", _vm._h('div', {
+    directives: [{
+      name: "show",
+      rawName: "v-show",
+      value: (_vm.isGuest),
+      expression: "isGuest"
+    }],
+    staticClass: "card-header card-header-dark"
+  }, [_vm._h('div', {
+    staticClass: "row"
+  }, [_vm._h('div', {
+    staticClass: "index-header"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-6"
+  }, [_vm._h('router-link', {
+    staticClass: "white-link",
+    attrs: {
+      "to": {
+        name: 'home'
+      }
+    }
+  }, ["LessPass"])]), " ", _vm._h('div', {
+    staticClass: "col-xs-6 text-xs-right"
+  }, [_vm._h('router-link', {
+    staticClass: "white-link pl-1",
+    attrs: {
+      "to": {
+        name: 'login'
+      }
+    }
+  }, [_vm._m(3)])])])])])])
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-check ml-1 text-success"
+  })
+},function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-key",
+    attrs: {
+      "aria-hidden": "true"
+    }
+  })
+},function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-sign-out",
+    attrs: {
+      "aria-hidden": "true"
+    }
+  })
+},function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-user-secret fa-clickable",
+    attrs: {
+      "aria-hidden": "true"
+    }
+  })
+}]}
+
+/***/ },
+/* 299 */
+/***/ function(module, exports) {
+
+module.exports={render:function (){var _vm=this;
+  return _vm._h('form', [(_vm.showError) ? _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12 text-muted text-danger"
-  }, ["\n            " + _s(errorMessage) + "\n        "])]) : _e(), " ", _h('div', {
+  }, ["\n            " + _vm._s(_vm.errorMessage) + "\n        "])]) : _vm._e(), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon"
-  }, [_m(0), " ", _h('input', {
+  }, [_vm._m(0), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (email),
+      value: (_vm.email),
       expression: "email"
     }],
     staticClass: "form-control",
@@ -34669,27 +35142,27 @@ module.exports={render:function (){with(this) {
       "required": ""
     },
     domProps: {
-      "value": _s(email)
+      "value": _vm._s(_vm.email)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        email = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.email = $event.target.value
       }
     }
-  }), " ", _h('small', {
+  }), " ", _vm._h('small', {
     staticClass: "form-text text-muted text-danger"
-  }, [(errors.userNameAlreadyExist) ? _h('span', ["Someone already use that username. Do you want to sign in ?"]) : _e(), " ", (errors.emailInvalid) ? _h('span', ["Please enter a valid email"]) : _e(), " ", (errors.emailRequired) ? _h('span', ["An email is required"]) : _e()])])])]), " ", _h('div', {
+  }, [(_vm.errors.userNameAlreadyExist) ? _vm._h('span', ["Someone already use that username. Do you want to sign in ?"]) : _vm._e(), " ", (_vm.errors.emailInvalid) ? _vm._h('span', ["Please enter a valid email"]) : _vm._e(), " ", (_vm.errors.emailRequired) ? _vm._h('span', ["An email is required"]) : _vm._e()])])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon"
-  }, [_m(1), " ", _h('input', {
+  }, [_vm._m(1), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password),
+      value: (_vm.password),
       expression: "password"
     }],
     staticClass: "form-control",
@@ -34701,25 +35174,25 @@ module.exports={render:function (){with(this) {
       "placeholder": "LessPass password"
     },
     domProps: {
-      "value": _s(password)
+      "value": _vm._s(_vm.password)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        password = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.password = $event.target.value
       }
     }
-  }), " ", _h('small', {
+  }), " ", _vm._h('small', {
     staticClass: "form-text text-muted"
-  }, [(errors.passwordRequired) ? _h('span', {
+  }, [(_vm.errors.passwordRequired) ? _vm._h('span', {
     staticClass: "text-danger"
-  }, ["A password is required"]) : _e(), " ", _h('label', {
+  }, ["A password is required"]) : _vm._e(), " ", _vm._h('label', {
     staticClass: "form-check-label"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (useMasterPassword),
+      value: (_vm.useMasterPassword),
       expression: "useMasterPassword"
     }],
     staticClass: "form-check-input",
@@ -34727,50 +35200,50 @@ module.exports={render:function (){with(this) {
       "type": "checkbox"
     },
     domProps: {
-      "checked": Array.isArray(useMasterPassword) ? _i(useMasterPassword, null) > -1 : _q(useMasterPassword, true)
+      "checked": Array.isArray(_vm.useMasterPassword) ? _vm._i(_vm.useMasterPassword, null) > -1 : _vm._q(_vm.useMasterPassword, true)
     },
     on: {
       "change": function($event) {
-        var $$a = useMasterPassword,
+        var $$a = _vm.useMasterPassword,
           $$el = $event.target,
           $$c = $$el.checked ? (true) : (false);
         if (Array.isArray($$a)) {
           var $$v = null,
-            $$i = _i($$a, $$v);
+            $$i = _vm._i($$a, $$v);
           if ($$c) {
-            $$i < 0 && (useMasterPassword = $$a.concat($$v))
+            $$i < 0 && (_vm.useMasterPassword = $$a.concat($$v))
           } else {
-            $$i > -1 && (useMasterPassword = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
+            $$i > -1 && (_vm.useMasterPassword = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
           }
         } else {
-          useMasterPassword = $$c
+          _vm.useMasterPassword = $$c
         }
       }
     }
-  }), "\n                        Check me if you want to use your master password here.\n                        ", _h('span', {
+  }), "\n                        Check me if you want to use your master password here.\n                        ", _vm._h('span', {
     staticClass: "tag tag-warning",
     on: {
       "click": function($event) {
         $event.preventDefault();
-        seeMasterPasswordHelp = !seeMasterPasswordHelp
+        _vm.seeMasterPasswordHelp = !_vm.seeMasterPasswordHelp
       }
     }
-  }, ["\n                            ?\n                        "]), " ", (seeMasterPasswordHelp) ? _h('span', {
+  }, ["\n                            ?\n                        "]), " ", (_vm.seeMasterPasswordHelp) ? _vm._h('span', {
     staticClass: "text-warning"
-  }, [_m(2), " Your master password ", _m(3), " on a database even encrypted.\n                            If you want to use your master password here, you can check the option.\n                            It will replace your master password with a LessPass generated password.\n                        "]) : _e()])])])])]), " ", _h('div', {
+  }, [_vm._m(2), " Your master password ", _vm._m(3), " on a database even encrypted.\n                            If you want to use your master password here, you can check the option.\n                            It will replace your master password with a LessPass generated password.\n                        "]) : _vm._e()])])])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12 hint--bottom",
     attrs: {
       "aria-label": "You can use your self hosted LessPass Database"
     }
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon"
-  }, [_m(4), " ", _h('input', {
+  }, [_vm._m(4), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (baseURL),
+      value: (_vm.baseURL),
       expression: "baseURL"
     }],
     staticClass: "form-control",
@@ -34780,207 +35253,97 @@ module.exports={render:function (){with(this) {
       "placeholder": "LessPass Database (https://...)"
     },
     domProps: {
-      "value": _s(baseURL)
+      "value": _vm._s(_vm.baseURL)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        baseURL = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.baseURL = $event.target.value
       }
     }
-  }), " ", _h('small', {
+  }), " ", _vm._h('small', {
     staticClass: "form-text text-muted"
-  }, [(noErrors()) ? _h('span', ["You can use your self hosted LessPass Database"]) : _e(), " ", (errors.baseURLRequired) ? _h('span', {
+  }, [(_vm.noErrors()) ? _vm._h('span', ["You can use your self hosted LessPass Database"]) : _vm._e(), " ", (_vm.errors.baseURLRequired) ? _vm._h('span', {
     staticClass: "text-danger"
-  }, ["\n                        A LessPass database url is required\n                    "]) : _e()])])])]), " ", _h('div', {
+  }, ["\n                        A LessPass database url is required\n                    "]) : _vm._e()])])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('button', {
+  }, [_vm._h('button', {
     staticClass: "btn btn-primary",
     attrs: {
       "id": "signInButton",
       "type": "button"
     },
     on: {
-      "click": signIn
+      "click": _vm.signIn
     }
-  }, [(loadingSignIn) ? _h('span', [_m(5)]) : _e(), "\n                Sign In\n            "]), " ", _h('button', {
+  }, [(_vm.loadingSignIn) ? _vm._h('span', [_vm._m(5)]) : _vm._e(), "\n                Sign In\n            "]), " ", _vm._h('button', {
     staticClass: "btn btn-secondary",
     attrs: {
       "id": "registerButton",
       "type": "button"
     },
     on: {
-      "click": register
+      "click": _vm.register
     }
-  }, [(loadingRegister) ? _h('span', [_m(6)]) : _e(), "\n                Register\n            "])])]), " ", _h('div', {
+  }, [(_vm.loadingRegister) ? _vm._h('span', [_vm._m(6)]) : _vm._e(), "\n                Register\n            "])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('router-link', {
+  }, [_vm._h('router-link', {
     attrs: {
       "to": {
         name: 'passwordReset'
       }
     }
   }, ["\n                Forgot you password ?\n            "])])])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-user"
   })
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-lock"
   })
-}},function (){with(this) {
-  return _h('br')
-}},function (){with(this) {
-  return _h('b', ["should not be saved"])
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('br')
+},function (){var _vm=this;
+  return _vm._h('b', ["should not be saved"])
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-globe"
   })
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-spinner fa-pulse fa-fw"
   })
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-spinner fa-pulse fa-fw"
   })
-}}]}
+}]}
 
 /***/ },
-/* 294 */
+/* 300 */
 /***/ function(module, exports) {
 
-module.exports={render:function (){with(this) {
-  return (fingerprint) ? _h('span', {
-    staticClass: "input-group-btn"
-  }, [_h('button', {
-    staticClass: "btn",
-    attrs: {
-      "id": "fingerprint",
-      "type": "button",
-      "tabindex": "-1"
-    }
-  }, [_h('small', {
-    staticClass: "hint--left",
-    attrs: {
-      "aria-label": "master password fingerprint"
-    }
-  }, [_h('i', {
-    staticClass: "fa fa-fw",
-    class: [icon1],
-    style: ({
-      color: color1
-    })
-  }), " ", _h('i', {
-    staticClass: "fa fa-fw",
-    class: [icon2],
-    style: ({
-      color: color2
-    })
-  }), " ", _h('i', {
-    staticClass: "fa fa-fw",
-    class: [icon3],
-    style: ({
-      color: color3
-    })
-  })])])]) : _e()
-}},staticRenderFns: []}
-
-/***/ },
-/* 295 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('div', [_h('form', [_h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12"
-  }, [_h('div', {
-    staticClass: "inner-addon left-addon"
-  }, [_m(0), " ", _h('input', {
-    directives: [{
-      name: "model",
-      rawName: "v-model",
-      value: (searchQuery),
-      expression: "searchQuery"
-    }],
-    staticClass: "form-control",
-    attrs: {
-      "name": "search",
-      "placeholder": "Search"
-    },
-    domProps: {
-      "value": _s(searchQuery)
-    },
-    on: {
-      "input": function($event) {
-        if ($event.target.composing) return;
-        searchQuery = $event.target.value
-      }
-    }
-  })])])])]), " ", _h('div', {
-    attrs: {
-      "id": "passwords"
-    }
-  }, [_l((filteredPasswords), function(password) {
-    return _h('div', {
-      staticClass: "row"
-    }, [_h('div', {
-      staticClass: "col-xs-9"
-    }, [_h('ul', {
-      staticClass: "list-unstyled"
-    }, [_h('li', [_h('router-link', {
-      attrs: {
-        "to": {
-          name: 'password',
-          params: {
-            id: password.id
-          }
-        }
-      }
-    }, ["\n                            " + _s(password.site) + "\n                        "])]), " ", _h('li', ["\n                        " + _s(password.login) + "\n                    "])])]), " ", _h('div', {
-      staticClass: "col-xs-3"
-    }, [_h('delete-button', {
-      staticClass: "float-xs-right",
-      attrs: {
-        "style": "position: absolute; right: 1em;margin-top: 3px;",
-        "action": deletePassword,
-        "object": password,
-        "text": "Are you sure you want to delete this password ?"
-      }
-    })])])
-  })])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-search"
-  })
-}}]}
-
-/***/ },
-/* 296 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('form', {
+module.exports={render:function (){var _vm=this;
+  return _vm._h('form', {
     attrs: {
       "id": "password-generator"
     }
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon"
-  }, [_m(0), " ", _h('input', {
+  }, [_vm._m(0), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.site),
+      value: (_vm.password.site),
       expression: "password.site"
     }],
     ref: "site",
@@ -34995,31 +35358,31 @@ module.exports={render:function (){with(this) {
       "autocapitalize": "none"
     },
     domProps: {
-      "value": _s(password.site)
+      "value": _vm._s(_vm.password.site)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        password.site = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.password.site = $event.target.value
       }
     }
-  }), " ", _h('datalist', {
+  }), " ", _vm._h('datalist', {
     attrs: {
       "id": "savedSites"
     }
-  }, [_l((passwords), function(pwd) {
-    return _h('option', ["\n                        " + _s(pwd.site) + " | " + _s(pwd.login) + "\n                    "])
-  })])])])]), " ", _h('remove-auto-complete'), " ", _h('div', {
+  }, [_vm._l((_vm.passwords), function(pwd) {
+    return _vm._h('option', ["\n                        " + _vm._s(pwd.site) + " | " + _vm._s(pwd.login) + "\n                    "])
+  })])])])]), " ", _vm._h('remove-auto-complete'), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon"
-  }, [_m(1), " ", _m(2), " ", _h('input', {
+  }, [_vm._m(1), " ", _vm._m(2), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.login),
+      value: (_vm.password.login),
       expression: "password.login"
     }],
     staticClass: "form-control",
@@ -35033,25 +35396,25 @@ module.exports={render:function (){with(this) {
       "autocapitalize": "none"
     },
     domProps: {
-      "value": _s(password.login)
+      "value": _vm._s(_vm.password.login)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        password.login = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.password.login = $event.target.value
       }
     }
-  })])])]), " ", _h('div', {
+  })])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "inner-addon left-addon input-group"
-  }, [_m(3), " ", _m(4), " ", _h('input', {
+  }, [_vm._m(3), " ", _vm._m(4), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (masterPassword),
+      value: (_vm.masterPassword),
       expression: "masterPassword"
     }],
     ref: "masterPassword",
@@ -35066,34 +35429,34 @@ module.exports={render:function (){with(this) {
       "autocapitalize": "none"
     },
     domProps: {
-      "value": _s(masterPassword)
+      "value": _vm._s(_vm.masterPassword)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        masterPassword = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.masterPassword = $event.target.value
       }
     }
-  }), " ", _h('fingerprint', {
+  }), " ", _vm._h('fingerprint', {
     attrs: {
-      "fingerprint": fingerprint
+      "fingerprint": _vm.fingerprint
     },
     nativeOn: {
       "click": function($event) {
-        showMasterPassword($event)
+        _vm.showMasterPassword($event)
       }
     }
-  })])])]), " ", _h('div', {
+  })])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "input-group"
-  }, [_m(5), " ", _h('input', {
+  }, [_vm._m(5), " ", _vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (generatedPassword),
+      value: (_vm.generatedPassword),
       expression: "generatedPassword"
     }],
     staticClass: "form-control",
@@ -35105,40 +35468,40 @@ module.exports={render:function (){with(this) {
       "readonly": ""
     },
     domProps: {
-      "value": _s(generatedPassword)
+      "value": _vm._s(_vm.generatedPassword)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        generatedPassword = $event.target.value
+        if ($event.target.composing) { return; }
+        _vm.generatedPassword = $event.target.value
       }
     }
-  }), " ", _h('span', {
+  }), " ", _vm._h('span', {
     staticClass: "input-group-btn"
-  }, [_h('button', {
+  }, [_vm._h('button', {
     staticClass: "btn-copy btn btn-primary",
     attrs: {
       "id": "copyPasswordButton",
-      "disabled": !generatedPassword,
+      "disabled": !_vm.generatedPassword,
       "type": "button",
       "data-clipboard-target": "#generatedPassword"
     },
     on: {
       "click": function($event) {
-        cleanFormInSeconds(10)
+        _vm.cleanFormInSeconds(10)
       }
     }
-  }, [_m(6), " Copy\n                     "])])])])]), " ", _m(7), " ", _h('div', {
+  }, [_vm._m(6), " Copy\n                     "])])])])]), " ", _vm._m(7), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, [_h('label', {
+  }, [_vm._h('label', {
     staticClass: "form-check-inline"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.lowercase),
+      value: (_vm.password.lowercase),
       expression: "password.lowercase"
     }],
     staticClass: "form-check-input",
@@ -35147,33 +35510,33 @@ module.exports={render:function (){with(this) {
       "id": "lowercase"
     },
     domProps: {
-      "checked": Array.isArray(password.lowercase) ? _i(password.lowercase, null) > -1 : _q(password.lowercase, true)
+      "checked": Array.isArray(_vm.password.lowercase) ? _vm._i(_vm.password.lowercase, null) > -1 : _vm._q(_vm.password.lowercase, true)
     },
     on: {
       "change": function($event) {
-        var $$a = password.lowercase,
+        var $$a = _vm.password.lowercase,
           $$el = $event.target,
           $$c = $$el.checked ? (true) : (false);
         if (Array.isArray($$a)) {
           var $$v = null,
-            $$i = _i($$a, $$v);
+            $$i = _vm._i($$a, $$v);
           if ($$c) {
-            $$i < 0 && (password.lowercase = $$a.concat($$v))
+            $$i < 0 && (_vm.password.lowercase = $$a.concat($$v))
           } else {
-            $$i > -1 && (password.lowercase = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
+            $$i > -1 && (_vm.password.lowercase = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
           }
         } else {
-          password.lowercase = $$c
+          _vm.password.lowercase = $$c
         }
       }
     }
-  }), " abc\n            "]), " ", _h('label', {
+  }), " abc\n            "]), " ", _vm._h('label', {
     staticClass: "form-check-inline"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.uppercase),
+      value: (_vm.password.uppercase),
       expression: "password.uppercase"
     }],
     staticClass: "form-check-input",
@@ -35182,33 +35545,33 @@ module.exports={render:function (){with(this) {
       "id": "uppercase"
     },
     domProps: {
-      "checked": Array.isArray(password.uppercase) ? _i(password.uppercase, null) > -1 : _q(password.uppercase, true)
+      "checked": Array.isArray(_vm.password.uppercase) ? _vm._i(_vm.password.uppercase, null) > -1 : _vm._q(_vm.password.uppercase, true)
     },
     on: {
       "change": function($event) {
-        var $$a = password.uppercase,
+        var $$a = _vm.password.uppercase,
           $$el = $event.target,
           $$c = $$el.checked ? (true) : (false);
         if (Array.isArray($$a)) {
           var $$v = null,
-            $$i = _i($$a, $$v);
+            $$i = _vm._i($$a, $$v);
           if ($$c) {
-            $$i < 0 && (password.uppercase = $$a.concat($$v))
+            $$i < 0 && (_vm.password.uppercase = $$a.concat($$v))
           } else {
-            $$i > -1 && (password.uppercase = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
+            $$i > -1 && (_vm.password.uppercase = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
           }
         } else {
-          password.uppercase = $$c
+          _vm.password.uppercase = $$c
         }
       }
     }
-  }), " ABC\n            "]), " ", _h('label', {
+  }), " ABC\n            "]), " ", _vm._h('label', {
     staticClass: "form-check-inline"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.numbers),
+      value: (_vm.password.numbers),
       expression: "password.numbers"
     }],
     staticClass: "form-check-input",
@@ -35217,33 +35580,33 @@ module.exports={render:function (){with(this) {
       "id": "numbers"
     },
     domProps: {
-      "checked": Array.isArray(password.numbers) ? _i(password.numbers, null) > -1 : _q(password.numbers, true)
+      "checked": Array.isArray(_vm.password.numbers) ? _vm._i(_vm.password.numbers, null) > -1 : _vm._q(_vm.password.numbers, true)
     },
     on: {
       "change": function($event) {
-        var $$a = password.numbers,
+        var $$a = _vm.password.numbers,
           $$el = $event.target,
           $$c = $$el.checked ? (true) : (false);
         if (Array.isArray($$a)) {
           var $$v = null,
-            $$i = _i($$a, $$v);
+            $$i = _vm._i($$a, $$v);
           if ($$c) {
-            $$i < 0 && (password.numbers = $$a.concat($$v))
+            $$i < 0 && (_vm.password.numbers = $$a.concat($$v))
           } else {
-            $$i > -1 && (password.numbers = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
+            $$i > -1 && (_vm.password.numbers = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
           }
         } else {
-          password.numbers = $$c
+          _vm.password.numbers = $$c
         }
       }
     }
-  }), "\n                123\n            "]), " ", _h('label', {
+  }), "\n                123\n            "]), " ", _vm._h('label', {
     staticClass: "form-check-inline"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.symbols),
+      value: (_vm.password.symbols),
       expression: "password.symbols"
     }],
     staticClass: "form-check-input",
@@ -35252,35 +35615,35 @@ module.exports={render:function (){with(this) {
       "id": "symbols"
     },
     domProps: {
-      "checked": Array.isArray(password.symbols) ? _i(password.symbols, null) > -1 : _q(password.symbols, true)
+      "checked": Array.isArray(_vm.password.symbols) ? _vm._i(_vm.password.symbols, null) > -1 : _vm._q(_vm.password.symbols, true)
     },
     on: {
       "change": function($event) {
-        var $$a = password.symbols,
+        var $$a = _vm.password.symbols,
           $$el = $event.target,
           $$c = $$el.checked ? (true) : (false);
         if (Array.isArray($$a)) {
           var $$v = null,
-            $$i = _i($$a, $$v);
+            $$i = _vm._i($$a, $$v);
           if ($$c) {
-            $$i < 0 && (password.symbols = $$a.concat($$v))
+            $$i < 0 && (_vm.password.symbols = $$a.concat($$v))
           } else {
-            $$i > -1 && (password.symbols = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
+            $$i > -1 && (_vm.password.symbols = $$a.slice(0, $$i).concat($$a.slice($$i + 1)))
           }
         } else {
-          password.symbols = $$c
+          _vm.password.symbols = $$c
         }
       }
     }
-  }), "\n                %!@\n            "])])]), " ", _h('div', {
+  }), "\n                %!@\n            "])])]), " ", _vm._h('div', {
     staticClass: "form-group row"
-  }, [_m(8), " ", _h('div', {
+  }, [_vm._m(8), " ", _vm._h('div', {
     staticClass: "col-xs-3 pl-0"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.length),
+      value: (_vm.password.length),
       expression: "password.length"
     }],
     staticClass: "form-control",
@@ -35290,21 +35653,21 @@ module.exports={render:function (){with(this) {
       "min": "6"
     },
     domProps: {
-      "value": _s(password.length)
+      "value": _vm._s(_vm.password.length)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        password.length = _n($event.target.value)
+        if ($event.target.composing) { return; }
+        _vm.password.length = _vm._n($event.target.value)
       }
     }
-  })]), " ", _m(9), " ", _h('div', {
+  })]), " ", _vm._m(9), " ", _vm._h('div', {
     staticClass: "col-xs-3 pl-0"
-  }, [_h('input', {
+  }, [_vm._h('input', {
     directives: [{
       name: "model",
       rawName: "v-model",
-      value: (password.counter),
+      value: (_vm.password.counter),
       expression: "password.counter"
     }],
     staticClass: "form-control",
@@ -35314,393 +35677,147 @@ module.exports={render:function (){with(this) {
       "min": "1"
     },
     domProps: {
-      "value": _s(password.counter)
+      "value": _vm._s(_vm.password.counter)
     },
     on: {
       "input": function($event) {
-        if ($event.target.composing) return;
-        password.counter = _n($event.target.value)
+        if ($event.target.composing) { return; }
+        _vm.password.counter = _vm._n($event.target.value)
       }
     }
   })])])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-globe"
   })
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-user"
   })
-}},function (){with(this) {
-  return _h('label', {
+},function (){var _vm=this;
+  return _vm._h('label', {
     staticClass: "sr-only",
     attrs: {
       "for": "login"
     }
   }, ["Login"])
-}},function (){with(this) {
-  return _h('label', {
+},function (){var _vm=this;
+  return _vm._h('label', {
     staticClass: "sr-only",
     attrs: {
       "for": "masterPassword"
     }
   }, ["Password"])
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-lock"
   })
-}},function (){with(this) {
-  return _h('label', {
+},function (){var _vm=this;
+  return _vm._h('label', {
     staticClass: "sr-only",
     attrs: {
       "for": "generatedPassword"
     }
   }, ["Password Generated"])
-}},function (){with(this) {
-  return _h('i', {
+},function (){var _vm=this;
+  return _vm._h('i', {
     staticClass: "fa fa-clipboard white"
   })
-}},function (){with(this) {
-  return _h('div', {
+},function (){var _vm=this;
+  return _vm._h('div', {
     staticClass: "form-group row"
-  }, [_h('div', {
+  }, [_vm._h('div', {
     staticClass: "col-xs-12"
-  }, ["\n            Password options\n            ", _h('hr', {
+  }, ["\n            Password options\n            ", _vm._h('hr', {
     attrs: {
       "style": "margin:0;"
     }
   })])])
-}},function (){with(this) {
-  return _h('label', {
+},function (){var _vm=this;
+  return _vm._h('label', {
     staticClass: "col-xs-3 col-form-label",
     attrs: {
       "for": "passwordLength"
     }
   }, ["Length"])
-}},function (){with(this) {
-  return _h('label', {
+},function (){var _vm=this;
+  return _vm._h('label', {
     staticClass: "col-xs-3 col-form-label",
     attrs: {
       "for": "passwordCounter"
     }
   }, ["Counter"])
-}}]}
-
-/***/ },
-/* 297 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('div', {
-    staticClass: "card",
-    attrs: {
-      "id": "lesspass",
-      "style": "border:none;"
-    }
-  }, [_h('lesspass-menu'), " ", _h('div', {
-    staticClass: "card-block",
-    attrs: {
-      "style": "min-height: 400px;"
-    }
-  }, [_h('router-view')])])
-}},staticRenderFns: []}
-
-/***/ },
-/* 298 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('form', {
-    on: {
-      "submit": function($event) {
-        $event.preventDefault();
-        resetPassword($event)
-      }
-    }
-  }, [(showError) ? _h('div', {
-    staticClass: "form-group row"
-  }, [_m(0)]) : _e(), " ", (successMessage) ? _h('div', {
-    staticClass: "form-group row"
-  }, [_m(1)]) : _e(), " ", _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12"
-  }, [_h('div', {
-    staticClass: "inner-addon left-addon"
-  }, [_m(2), " ", _h('input', {
-    directives: [{
-      name: "model",
-      rawName: "v-model",
-      value: (email),
-      expression: "email"
-    }],
-    staticClass: "form-control",
-    attrs: {
-      "id": "email",
-      "name": "email",
-      "type": "email",
-      "placeholder": "Email"
-    },
-    domProps: {
-      "value": _s(email)
-    },
-    on: {
-      "input": function($event) {
-        if ($event.target.composing) return;
-        email = $event.target.value
-      }
-    }
-  }), " ", _h('small', {
-    staticClass: "form-text text-muted text-danger"
-  }, [(emailRequired) ? _h('span', ["An email is required"]) : _e()])])])]), " ", _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12"
-  }, [_h('button', {
-    staticClass: "btn btn-primary",
-    attrs: {
-      "id": "loginButton",
-      "type": "submit"
-    }
-  }, [(loading) ? _h('span', [_m(3)]) : _e(), "\n                Send me a reset link\n            "])])])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('div', {
-    staticClass: "col-xs-12 text-muted text-danger"
-  }, ["\n            Oops! Something went wrong. Retry in a few minutes.\n        "])
-}},function (){with(this) {
-  return _h('div', {
-    staticClass: "col-xs-12 text-muted text-success"
-  }, ["\n            If a matching account was found an email was sent to allow you to reset your password.\n        "])
-}},function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-user"
-  })
-}},function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-spinner fa-pulse fa-fw"
-  })
-}}]}
-
-/***/ },
-/* 299 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('div', {
-    attrs: {
-      "id": "delete-button"
-    }
-  }, [_h('button', {
-    staticClass: "btn btn-danger",
-    class: {
-      'btn-progress': progress
-    },
-    attrs: {
-      "type": "button"
-    },
-    on: {
-      "mouseup": click,
-      "mousedown": start,
-      "mouseout": cancel
-    }
-  }, [_m(0), "\n        " + _s(confirmHelp) + "\n    "])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
-    staticClass: "fa-white fa fa-trash fw"
-  })
-}}]}
-
-/***/ },
-/* 300 */
-/***/ function(module, exports) {
-
-module.exports={render:function (){with(this) {
-  return _h('form', {
-    on: {
-      "submit": function($event) {
-        $event.preventDefault();
-        resetPasswordConfirm($event)
-      }
-    }
-  }, [(showError) ? _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12 text-muted text-danger"
-  }, ["\n            " + _s(errorMessage) + "\n        "])]) : _e(), " ", (successMessage) ? _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12 text-muted text-success"
-  }, ["\n            You're password was reset successfully.\n            ", _h('router-link', {
-    attrs: {
-      "to": {
-        name: 'login'
-      }
-    }
-  }, ["Do you want to login ?"])])]) : _e(), " ", _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12"
-  }, [_h('div', {
-    staticClass: "inner-addon left-addon"
-  }, [_m(0), " ", _h('input', {
-    directives: [{
-      name: "model",
-      rawName: "v-model",
-      value: (new_password),
-      expression: "new_password"
-    }],
-    staticClass: "form-control",
-    attrs: {
-      "id": "new-password",
-      "name": "new-password",
-      "type": "password",
-      "autocomplete": "new-password",
-      "placeholder": "New Password"
-    },
-    domProps: {
-      "value": _s(new_password)
-    },
-    on: {
-      "input": function($event) {
-        if ($event.target.composing) return;
-        new_password = $event.target.value
-      }
-    }
-  }), " ", _h('small', {
-    staticClass: "form-text text-muted text-danger"
-  }, [(passwordRequired) ? _h('span', ["A password is required"]) : _e()])])])]), " ", _m(1)])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-lock"
-  })
-}},function (){with(this) {
-  return _h('div', {
-    staticClass: "form-group row"
-  }, [_h('div', {
-    staticClass: "col-xs-12"
-  }, [_h('button', {
-    staticClass: "btn btn-primary",
-    attrs: {
-      "id": "loginButton",
-      "type": "submit"
-    }
-  }, ["\n                Reset my password\n            "])])])
-}}]}
+}]}
 
 /***/ },
 /* 301 */
 /***/ function(module, exports) {
 
-module.exports={render:function (){with(this) {
-  return _h('div', {
-    attrs: {
-      "id": "menu"
-    }
-  }, [_h('div', {
+module.exports={render:function (){var _vm=this;
+  return _vm._h('div', [_vm._h('form', [_vm._h('div', {
+    staticClass: "form-group row"
+  }, [_vm._h('div', {
+    staticClass: "col-xs-12"
+  }, [_vm._h('div', {
+    staticClass: "inner-addon left-addon"
+  }, [_vm._m(0), " ", _vm._h('input', {
     directives: [{
-      name: "show",
-      rawName: "v-show",
-      value: (isAuthenticated),
-      expression: "isAuthenticated"
+      name: "model",
+      rawName: "v-model",
+      value: (_vm.searchQuery),
+      expression: "searchQuery"
     }],
-    staticClass: "card-header"
-  }, [_h('div', {
-    staticClass: "row"
-  }, [_h('div', {
-    staticClass: "col-xs-6"
-  }, [_h('router-link', {
-    staticClass: "grey-link",
+    staticClass: "form-control",
     attrs: {
-      "to": {
-        name: 'home'
-      }
-    }
-  }, ["LessPass"]), " ", _h('span', {
-    staticClass: " hint--right",
-    attrs: {
-      "aria-label": "Save password"
+      "name": "search",
+      "placeholder": "Search"
+    },
+    domProps: {
+      "value": _vm._s(_vm.searchQuery)
     },
     on: {
-      "click": saveOrUpdatePassword
-    }
-  }, [(passwordStatus == 'DIRTY') ? _h('i', {
-    staticClass: "fa fa-save ml-1 fa-clickable"
-  }) : _e()]), " ", (passwordStatus == 'CREATED') ? _h('span', {
-    staticClass: "text-success"
-  }, [_m(0)]) : _e()]), " ", _h('div', {
-    staticClass: "col-xs-6 text-xs-right"
-  }, [_h('router-link', {
-    staticClass: "grey-link ml-1",
-    attrs: {
-      "to": {
-        name: 'passwords'
+      "input": function($event) {
+        if ($event.target.composing) { return; }
+        _vm.searchQuery = $event.target.value
       }
     }
-  }, [_m(1)]), " ", _h('button', {
-    staticClass: "grey-link ml-1 btn btn-link p-0 m-0",
+  })])])])]), " ", _vm._h('div', {
     attrs: {
-      "type": "button"
-    },
-    on: {
-      "click": logout
+      "id": "passwords"
     }
-  }, [_m(2)])])])]), " ", _h('div', {
-    directives: [{
-      name: "show",
-      rawName: "v-show",
-      value: (isGuest),
-      expression: "isGuest"
-    }],
-    staticClass: "card-header card-header-dark"
-  }, [_h('div', {
-    staticClass: "row"
-  }, [_h('div', {
-    staticClass: "index-header"
-  }, [_h('div', {
-    staticClass: "col-xs-6"
-  }, [_h('router-link', {
-    staticClass: "white-link",
-    attrs: {
-      "to": {
-        name: 'home'
+  }, [_vm._l((_vm.filteredPasswords), function(password) {
+    return _vm._h('div', {
+      staticClass: "row"
+    }, [_vm._h('div', {
+      staticClass: "col-xs-9"
+    }, [_vm._h('ul', {
+      staticClass: "list-unstyled"
+    }, [_vm._h('li', [_vm._h('router-link', {
+      attrs: {
+        "to": {
+          name: 'password',
+          params: {
+            id: password.id
+          }
+        }
       }
-    }
-  }, ["LessPass"])]), " ", _h('div', {
-    staticClass: "col-xs-6 text-xs-right"
-  }, [_h('router-link', {
-    staticClass: "white-link pl-1",
-    attrs: {
-      "to": {
-        name: 'login'
+    }, ["\n                            " + _vm._s(password.site) + "\n                        "])]), " ", _vm._h('li', ["\n                        " + _vm._s(password.login) + "\n                    "])])]), " ", _vm._h('div', {
+      staticClass: "col-xs-3"
+    }, [_vm._h('delete-button', {
+      staticClass: "float-xs-right",
+      attrs: {
+        "style": "position: absolute; right: 1em;margin-top: 3px;",
+        "action": _vm.deletePassword,
+        "object": password,
+        "text": "Are you sure you want to delete this password ?"
       }
-    }
-  }, [_m(3)])])])])])])
-}},staticRenderFns: [function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-check ml-1 text-success"
+    })])])
+  })])])
+},staticRenderFns: [function (){var _vm=this;
+  return _vm._h('i', {
+    staticClass: "fa fa-search"
   })
-}},function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-key",
-    attrs: {
-      "aria-hidden": "true"
-    }
-  })
-}},function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-sign-out",
-    attrs: {
-      "aria-hidden": "true"
-    }
-  })
-}},function (){with(this) {
-  return _h('i', {
-    staticClass: "fa fa-user-secret fa-clickable",
-    attrs: {
-      "aria-hidden": "true"
-    }
-  })
-}}]}
+}]}
 
 /***/ },
 /* 302 */
@@ -37601,8 +37718,8 @@ if(content.locals) module.exports = content.locals;
 if(false) {
 	// When the styles change, update the <style> tags
 	if(!content.locals) {
-		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-28c275d9!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Fingerprint.vue", function() {
-			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-28c275d9!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Fingerprint.vue");
+		module.hot.accept("!!./../node_modules/css-loader/index.js!./../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-20df7076!./../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./LessPass.vue", function() {
+			var newContent = require("!!./../node_modules/css-loader/index.js!./../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-20df7076!./../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./LessPass.vue");
 			if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
 			update(newContent);
 		});
@@ -37627,8 +37744,8 @@ if(content.locals) module.exports = content.locals;
 if(false) {
 	// When the styles change, update the <style> tags
 	if(!content.locals) {
-		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-4e146d4e!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./PasswordGenerator.vue", function() {
-			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-4e146d4e!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./PasswordGenerator.vue");
+		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-386adbab!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./DeleteButton.vue", function() {
+			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-386adbab!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./DeleteButton.vue");
 			if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
 			update(newContent);
 		});
@@ -37653,8 +37770,8 @@ if(content.locals) module.exports = content.locals;
 if(false) {
 	// When the styles change, update the <style> tags
 	if(!content.locals) {
-		module.hot.accept("!!./../node_modules/css-loader/index.js!./../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-7d2a5ef8!./../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./LessPass.vue", function() {
-			var newContent = require("!!./../node_modules/css-loader/index.js!./../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-7d2a5ef8!./../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./LessPass.vue");
+		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-59331834!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Fingerprint.vue", function() {
+			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-59331834!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Fingerprint.vue");
 			if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
 			update(newContent);
 		});
@@ -37679,8 +37796,8 @@ if(content.locals) module.exports = content.locals;
 if(false) {
 	// When the styles change, update the <style> tags
 	if(!content.locals) {
-		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-e2e1cfd0!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./DeleteButton.vue", function() {
-			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-e2e1cfd0!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./DeleteButton.vue");
+		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-66cecd66!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Menu.vue", function() {
+			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-66cecd66!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Menu.vue");
 			if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
 			update(newContent);
 		});
@@ -37705,8 +37822,8 @@ if(content.locals) module.exports = content.locals;
 if(false) {
 	// When the styles change, update the <style> tags
 	if(!content.locals) {
-		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-eabada8c!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Menu.vue", function() {
-			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-eabada8c!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Menu.vue");
+		module.hot.accept("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-fa5ce628!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./PasswordGenerator.vue", function() {
+			var newContent = require("!!./../../node_modules/css-loader/index.js!./../../node_modules/vue-loader/lib/style-rewriter.js?id=data-v-fa5ce628!./../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./PasswordGenerator.vue");
 			if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
 			update(newContent);
 		});

@@ -263,7 +263,7 @@
         methods: {
             encryptLogin: debounce(function () {
                 if (this.password.login && this.masterPassword) {
-                    LessPass.encryptLogin(this.password.login, this.masterPassword).then(encryptedLogin => {
+                    LessPass.encryptLogin(this.password.login, this.masterPassword, {iterations: 100000}).then(encryptedLogin => {
                         this.encryptedLogin = encryptedLogin;
                     });
                 }
