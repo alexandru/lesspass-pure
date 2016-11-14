@@ -267,7 +267,7 @@
                         this.encryptedLogin = encryptedLogin;
                     });
                 }
-            }, 3000),
+            }, 4000),
             showMasterPassword(){
                 if (this.$refs.masterPassword.type === 'password') {
                     this.$refs.masterPassword.type = 'text';
